@@ -14,18 +14,30 @@ Query: `$@`
 
 Follow these steps in order.
 
-## Step 1 — Check DuckDB is installed
+## Execution rules (all platforms)
+
+- DuckDB runs in-process via the Python package; no CLI is used.
+- Cache paths pass as raw strings in Python: `r'C:\Users\me\.duckdb\docs\duckdb-docs.duckdb'` (forward slashes equally fine).
+- Cache freshness uses `os.path.getmtime`; output CSV to stdout.
+
+## Step 1 — Check the Python package
 
 ```bash
-command -v duckdb
+python -c "import duckdb"
 ```
 
-If not found, delegate to `/duckdb-skills:install-duckdb` and then continue.
+If not found, tell the user to run `python -m pip install duckdb`, then continue.
 
 ## Step 2 — Ensure required extensions are installed
 
 ```bash
-duckdb :memory: -c "INSTALL httpfs; INSTALL fts;"
+python - <<'PY'
+import duckdb
+con = duckdb.connect(':memory:')
+con.execute('INSTALL httpfs;')
+con.execute('INSTALL fts;')
+print('ready')
+PY
 ```
 
 If this fails, report the error and stop.
@@ -72,66 +84,83 @@ Use the extracted terms as `SEARCH_QUERY` in the next step.
 
 ## Step 4 — Ensure local cache is fresh
 
-The cache lives at `$HOME/.duckdb/docs/CACHE_FILENAME` (where `CACHE_FILENAME` is `duckdb-docs.duckdb` or `ducklake-docs.duckdb` per Step 3).
-
-First, ensure the directory exists:
+The cache lives at `~/.duckdb/docs/CACHE_FILENAME` (where `CACHE_FILENAME` is `duckdb-docs.duckdb` or `ducklake-docs.duckdb` per Step 3).
 
 ```bash
-mkdir -p "$HOME/.duckdb/docs"
+python - <<'PY'
+import os, time
+from pathlib import Path
+cache = Path.home() / '.duckdb' / 'docs' / '<CACHE_FILENAME>'
+cache.parent.mkdir(parents=True, exist_ok=True)
+if cache.exists():
+    age_days = int(time.time() - os.path.getmtime(cache)) // 86400
+else:
+    age_days = 999
+print(age_days)
+PY
 ```
 
-Then check whether the cache file exists and is fresh (≤2 days old):
+**If the age is ≤ 2** → skip to Step 5.
+
+**Otherwise** (stale or missing) → fetch the index atomically:
 
 ```bash
-CACHE_FILE="$HOME/.duckdb/docs/CACHE_FILENAME"
-if [ -f "$CACHE_FILE" ]; then
-    MTIME=$(stat -f %m "$CACHE_FILE" 2>/dev/null || stat -c %Y "$CACHE_FILE")
-    CACHE_AGE_DAYS=$(( ( $(date +%s) - MTIME ) / 86400 ))
-else
-    CACHE_AGE_DAYS=999
-fi
-echo "Cache age: $CACHE_AGE_DAYS days"
+python - <<'PY'
+import duckdb, os
+from pathlib import Path
+cache = Path.home() / '.duckdb' / 'docs' / '<CACHE_FILENAME>'
+tmp = cache.with_suffix('.tmp')
+con = duckdb.connect(':memory:')
+con.execute('INSTALL httpfs;')
+con.execute('INSTALL httpfs;')
+con.execute('LOAD httpfs;')
+con.execute('INSTALL fts;')
+con.execute('LOAD fts;')
+q = "'" + str(cache) + "'"
+con.execute(f"ATTACH '<REMOTE_URL>' AS remote (READ_ONLY);")
+con.execute(f"ATTACH {q.replace('.duckdb', '.tmp')} AS tmp;")
+con.execute('COPY FROM DATABASE remote TO tmp;')
+con.close()
+os.replace(str(cache).replace('.duckdb', '.tmp'), str(cache))
+print('cache refreshed:', cache)
+PY
 ```
 
-**If `CACHE_AGE_DAYS` ≤ 2** → skip to Step 5.
-
-**Otherwise** (stale or missing) → fetch the index:
-
-```bash
-duckdb -c "
-LOAD httpfs;
-LOAD fts;
-ATTACH 'REMOTE_URL' AS remote (READ_ONLY);
-ATTACH '$HOME/.duckdb/docs/CACHE_FILENAME.tmp' AS tmp;
-COPY FROM DATABASE remote TO tmp;
-" && mv "$HOME/.duckdb/docs/CACHE_FILENAME.tmp" "$HOME/.duckdb/docs/CACHE_FILENAME"
-```
-
-Replace `REMOTE_URL` and `CACHE_FILENAME` per Step 3. If the fetch fails (network error), report the error and stop.
+If the fetch fails (network error), report the error and stop.
 
 ## Step 5 — Search the docs
 
 ```bash
-duckdb "$HOME/.duckdb/docs/CACHE_FILENAME" -readonly -json -c "
-LOAD fts;
+python - <<'PY'
+import duckdb, csv, sys
+from pathlib import Path
+cache = Path.home() / '.duckdb' / 'docs' / '<CACHE_FILENAME>'
+con = duckdb.connect(str(cache), read_only=True)
+con.execute('INSTALL fts;')
+con.execute('LOAD fts;')
+cur = con.execute("""
 SELECT
     chunk_id, page_title, section, breadcrumb, url, version, text,
-    fts_main_docs_chunks.match_bm25(chunk_id, 'SEARCH_QUERY') AS score
+    fts_main_docs_chunks.match_bm25(chunk_id, ?) AS score
 FROM docs_chunks
 WHERE score IS NOT NULL
-  AND version = 'VERSION'
+  AND version = '<VERSION>'
 ORDER BY score DESC
 LIMIT 8;
-"
+""", ['<SEARCH_QUERY>'])
+w = csv.writer(sys.stdout)
+w.writerow([d[0] for d in cur.description])
+w.writerows(cur.fetchall())
+PY
 ```
 
-Replace `CACHE_FILENAME`, `SEARCH_QUERY`, and `VERSION` per Step 3. Remove the `AND version = 'VERSION'` line if searching across all versions.
+Remove the `AND version = '<VERSION>'` line if searching across all versions.
 
-If the user's question could benefit from both DuckDB docs and blog results, run two queries (one with `version = 'stable'`, one with `version = 'blog'`) or omit the version filter entirely.
+If the user's question could benefit from both DuckDB docs and blog results, run two queries (one with `version = 'lts'`, one with `version = 'blog'`) or omit the version filter entirely.
 
 ## Step 6 — Handle errors
 
-- **Extension not installed** (`httpfs` or `fts` not found): run `duckdb :memory: -c "INSTALL httpfs; INSTALL fts;"` and retry.
+- **Extension not installed** (`httpfs` or `fts` not found): run the Step 2 snippet and retry.
 - **ATTACH fails / network unreachable**: inform the user that the docs index is unavailable and suggest checking their internet connection. The DuckDB index is hosted at `https://duckdb.org/data/docs-search.duckdb` and the DuckLake index at `https://ducklake.select/data/docs-search.duckdb`.
 - **No results** (all scores NULL or empty result set): try broadening the query — drop the least specific term, or try a single-word version of the query — then retry Step 5. If still no results, tell the user no matching documentation was found and suggest visiting https://duckdb.org/docs or https://ducklake.select/docs directly.
 
