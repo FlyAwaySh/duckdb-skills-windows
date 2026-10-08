@@ -2,7 +2,7 @@
 
 [English](README.md) | 简体中文
 
-基于 DuckDB 的智能体技能包，覆盖数据文件读取、格式转换、数据库查询、对象存储浏览与文档检索。任何能加载 `SKILL.md` 技能的智能体运行时都可以使用——[Claude Code](https://claude.ai/code)、ZCode 及其他兼容 CLI。
+基于 DuckDB-Skill，覆盖数据文件读取、格式转换、数据库查询、对象存储浏览与文档检索。任何能加载 `SKILL.md` 技能的智能体运行时都可以使用——[Claude Code](https://claude.ai/code)、ZCode 及其他兼容 CLI。
 
 改编自 [duckdb/duckdb-skills](https://github.com/duckdb/duckdb-skills)（MIT 许可）。本版本的全部 DuckDB 语句通过 [duckdb Python 包](https://duckdb.org/docs/api/python/overview)在进程内执行，Windows、macOS、Linux 行为完全一致——不依赖 DuckDB CLI，不含平台特定的 shell 命令与路径处理。
 
