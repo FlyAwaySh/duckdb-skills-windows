@@ -1,5 +1,7 @@
 # duckdb-skills
 
+English | [简体中文](README.zh-CN.md)
+
 DuckDB-powered agent skills for data files, databases, object storage, and documentation search. Works with any agent runtime that loads `SKILL.md` skills — [Claude Code](https://claude.ai/code), ZCode, and compatible CLIs.
 
 Adapted from [duckdb/duckdb-skills](https://github.com/duckdb/duckdb-skills) (MIT). This build runs every DuckDB statement through the [duckdb Python package](https://duckdb.org/docs/api/python/overview) in-process, so the skills behave identically on Windows, macOS, and Linux — no DuckDB CLI and no shell-specific path handling.
